@@ -84,6 +84,14 @@
   header { display: flex; align-items: baseline; justify-content: space-between; }
   header h1 { margin: 0; font-size: 21px; font-weight: 700; }
   header .sub { font-size: 15px; color: var(--ink-soft); }
+  header .right { display: flex; align-items: center; gap: 14px; }
+  button.theme {
+    font: inherit; font-size: 15px; font-weight: 700; color: var(--ink);
+    background: var(--btn); border: 1.5px solid var(--btn-border); border-radius: 999px;
+    padding: 6px 14px; min-height: 36px; cursor: pointer; touch-action: manipulation;
+  }
+  button.theme:focus-visible { outline: 3px solid var(--pen); outline-offset: 2px; }
+  @media (prefers-reduced-motion: no-preference) { body, .cell, button.key, button.tool, .panel, footer { transition-property: background-color, color, border-color; transition-duration: 220ms; } .cell { transition-duration: 140ms; } }
 
   main.play {
     display: grid;
@@ -278,7 +286,7 @@
 <div class="app">
   <header>
     <h1>Kitchen Table Sudoku</h1>
-    <span class="sub" id="filledCount"></span>
+    <div class="right"><span class="sub" id="filledCount"></span><button class="theme" id="themeBtn" type="button">Dark</button></div>
   </header>
 
   <main class="play">
@@ -509,7 +517,14 @@
   // =====================================================================
   // app
   // =====================================================================
-  const KEY = 'kitchen-table-sudoku-v2', LEVEL_KEY = 'kitchen-table-sudoku-level';
+  const KEY = 'kitchen-table-sudoku-v2', LEVEL_KEY = 'kitchen-table-sudoku-level', THEME_KEY = 'kitchen-table-sudoku-theme';
+  // light or dark: follows the ipad until she picks one, then remembers her pick
+  const isDark = () => document.documentElement.dataset.theme ? document.documentElement.dataset.theme === 'dark' : matchMedia('(prefers-color-scheme: dark)').matches;
+  function applyTheme(t) {
+    if (t) document.documentElement.dataset.theme = t;
+    document.getElementById('themeBtn').textContent = isDark() ? 'Light' : 'Dark';
+    document.querySelector('meta[name="theme-color"]')?.setAttribute('content', isDark() ? '#15181e' : '#f5f4ef');
+  }
   let S = null, selected = -1, notesMode = false, undo = [], tick = null, lastTick = 0;
   const load = k => { try { const j = localStorage.getItem(k); return j ? JSON.parse(j) : null; } catch { return null; } };
   const save = () => { try { localStorage.setItem(KEY, JSON.stringify(S)); } catch {} };
@@ -677,6 +692,9 @@
   $('confirmNo').addEventListener('click', () => { $('confirmDialog').hidden = true; });
   $('confirmYes').addEventListener('click', () => { $('confirmDialog').hidden = true; newGame(+levelInput.value); });
   $('solvedClose').addEventListener('click', () => { $('solvedDialog').hidden = true; });
+  $('themeBtn').addEventListener('click', () => { const t = isDark() ? 'light' : 'dark'; applyTheme(t); try { localStorage.setItem(THEME_KEY, t); } catch {} });
+  try { applyTheme(localStorage.getItem(THEME_KEY) || null); } catch { applyTheme(null); }
+  matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => applyTheme(null));
   $('solvedNew').addEventListener('click', () => { $('solvedDialog').hidden = true; newGame(+levelInput.value); });
 
   document.addEventListener('keydown', e => {
