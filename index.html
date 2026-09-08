@@ -247,8 +247,29 @@
   .solved-time { font-size: 44px; font-weight: 700; color: var(--ok); }
 
   @media (prefers-reduced-motion: no-preference) {
+    .cell { transition: background-color 140ms ease, color 140ms ease; }
+    button.key { transition: opacity 260ms ease, transform 120ms ease; }
     .cell.pop { animation: pop .18s ease-out; }
     @keyframes pop { from { transform: scale(.85); } to { transform: scale(1); } }
+    /* a wrong digit shakes the cell, so the mistake reaches her even when she isn't looking straight at it */
+    .cell.shake { animation: shake .34s ease; }
+    @keyframes shake { 0%, 100% { transform: none; } 20% { transform: translateX(-5px); } 40% { transform: translateX(5px); } 60% { transform: translateX(-4px); } 80% { transform: translateX(4px); } }
+    /* a finished row, column or box ripples once, each cell a beat after its neighbour */
+    .cell.unit { animation: unit .5s ease both; animation-delay: var(--d, 0ms); }
+    @keyframes unit { 35% { background-color: color-mix(in srgb, var(--ok) 32%, transparent); transform: scale(1.08); } }
+    /* a new puzzle: givens settle in along a diagonal wave */
+    .cell.deal { animation: deal .32s ease-out both; animation-delay: var(--d, 0ms); }
+    @keyframes deal { from { opacity: 0; transform: scale(.8); } }
+    /* undo and erase: the cell settles back */
+    .cell.settle { animation: settle .22s ease-out; }
+    @keyframes settle { from { transform: scale(1.12); opacity: .5; } }
+    /* the finished grid: a wave of green sweeps corner to corner, then the sheet pops in */
+    .cell.win { animation: win .7s ease both; animation-delay: var(--d, 0ms); }
+    @keyframes win { 40% { background-color: color-mix(in srgb, var(--ok) 45%, transparent); color: var(--ok); transform: scale(1.1); } }
+    .veil { animation: veilIn 180ms ease-out; }
+    .veil .sheet { animation: popIn 240ms cubic-bezier(.2, .8, .3, 1.12) both; }
+    @keyframes veilIn { from { opacity: 0; } }
+    @keyframes popIn { from { opacity: 0; transform: translateY(14px) scale(.96); } }
   }
 </style>
 </head>
@@ -504,11 +525,15 @@
     undo = [];
     selected = puzzle.findIndex(v => v === 0);
     save(); renderAll(); startTimer();
+    for (let i = 0; i < N; i++) if (puzzle[i]) fx(i, 'deal', (rowOf(i) + colOf(i)) * 22);
   }
 
   // ----- dom -----
   const $ = id => document.getElementById(id);
   const boardEl = $('board'), cells = [];
+  const FX = new Set(['pop', 'shake', 'unit', 'deal', 'settle', 'win']);
+  const fx = (i, cls, delay = 0) => { const el = cells[i]; el.classList.remove(cls); el.style.setProperty('--d', delay + 'ms'); void el.offsetWidth; el.classList.add(cls); };
+  boardEl.addEventListener('animationend', e => { for (const c of FX) e.target.classList.remove(c); });
   for (let i = 0; i < N; i++) {
     const b = document.createElement('button');
     b.className = 'cell'; b.dataset.r = rowOf(i); b.dataset.c = colOf(i); b.setAttribute('role', 'gridcell');
@@ -545,7 +570,8 @@
       const given = S.puzzle[i] !== 0;
       const wrong = !given && v !== 0 && v !== S.solution[i];
       if (v && !wrong) { counts[v]++; filled++; }
-      el.className = 'cell'
+      const fx = [...el.classList].filter(c => FX.has(c)).join(' ');
+      el.className = 'cell' + (fx ? ' ' + fx : '')
         + (given ? ' given' : '')
         + (v ? ' filled' : '')
         + (wrong ? ' wrong' : '')
@@ -583,27 +609,39 @@
       S.values[selected] = d; S.notes[selected] = [];
       if (d !== S.solution[selected]) S.mistakes++;
       else for (const p of PEERS[selected]) { const n = S.notes[p], at = n.indexOf(d); if (at >= 0) n.splice(at, 1); }
-      const el = cells[selected]; el.classList.add('pop'); setTimeout(() => el.classList.remove('pop'), 200);
     }
-    save(); renderAll(); checkSolved();
+    const placed = !notesMode && S.values[selected] === d, wrong = placed && d !== S.solution[selected];
+    save(); renderAll();
+    if (wrong) fx(selected, 'shake');
+    else if (placed) {
+      fx(selected, 'pop');
+      // any row, column or box this digit just completed ripples once
+      const done = [ROWS[rowOf(selected)], COLS[colOf(selected)], BOXES[boxOf(selected)]].filter(u => u.every(i => S.values[i] === S.solution[i]));
+      const seen = new Set();
+      for (const u of done) u.forEach((i, k) => { if (!seen.has(i)) { seen.add(i); fx(i, 'unit', k * 35); } });
+    }
+    checkSolved();
   }
   function erase() {
     if (S.solved || selected < 0 || S.puzzle[selected] !== 0) return;
     if (!S.values[selected] && !S.notes[selected].length) return;
     snapshot(); S.values[selected] = 0; S.notes[selected] = [];
-    save(); renderAll();
+    save(); renderAll(); fx(selected, 'settle');
   }
   function doUndo() {
     const u = undo.pop(); if (!u) return;
+    const changed = []; for (let i = 0; i < N; i++) if (S.values[i] !== u.values[i] || S.notes[i].join() !== u.notes[i].join()) changed.push(i);
     S.values = u.values; S.notes = u.notes; S.mistakes = u.mistakes;
-    save(); renderAll();
+    save(); renderAll(); changed.forEach(i => fx(i, 'settle'));
   }
   function checkSolved() {
     for (let i = 0; i < N; i++) if (S.values[i] !== S.solution[i]) return;
     S.solved = true; stopTimer(); save(); renderAll();
     $('solvedTime').textContent = fmt(S.elapsed);
     $('solvedNote').textContent = S.mistakes === 0 ? 'No mistakes. Perfect.' : `${S.mistakes} mistake${S.mistakes === 1 ? '' : 's'} along the way.`;
-    $('solvedDialog').hidden = false;
+    const motion = matchMedia('(prefers-reduced-motion: no-preference)').matches;
+    if (motion) for (let i = 0; i < N; i++) fx(i, 'win', (rowOf(i) + colOf(i)) * 40);
+    setTimeout(() => { $('solvedDialog').hidden = false; }, motion ? 900 : 0);
   }
 
   // ----- timer -----
