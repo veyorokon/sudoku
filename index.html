@@ -649,7 +649,8 @@
   }
 
   // ----- moves -----
-  function snapshot() { undo.push({ values: S.values.slice(), notes: S.notes.map(n => n.slice()), mistakes: S.mistakes }); if (undo.length > 200) undo.shift(); }
+  // a mistake is a record of what happened, not part of the board, so undo never takes one back
+  function snapshot() { undo.push({ values: S.values.slice(), notes: S.notes.map(n => n.slice()) }); if (undo.length > 200) undo.shift(); }
   function enter(d) {
     if (S.solved || selected < 0 || S.puzzle[selected] !== 0) return;
     snapshot();
@@ -685,7 +686,7 @@
   function doUndo() {
     const u = undo.pop(); if (!u) return;
     const changed = []; for (let i = 0; i < N; i++) if (S.values[i] !== u.values[i] || S.notes[i].join() !== u.notes[i].join()) changed.push(i);
-    S.values = u.values; S.notes = u.notes; S.mistakes = u.mistakes;
+    S.values = u.values; S.notes = u.notes;
     for (let i = 0; i < N; i++) if (S.puzzle[i]) { S.values[i] = S.puzzle[i]; S.notes[i] = []; }   // starting numbers may have changed since that move
     save(); renderAll(); changed.forEach(i => fx(i, 'settle'));
   }
