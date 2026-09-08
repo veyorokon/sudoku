@@ -114,7 +114,7 @@
   /* ---------- board ---------- */
   .board-wrap { width: var(--board); }
   .board {
-    display: grid; grid-template-columns: repeat(9, 1fr);
+    display: grid; grid-template-columns: repeat(9, 1fr); grid-template-rows: repeat(9, 1fr);   /* rows share height evenly even when one holds no numbers */
     aspect-ratio: 1;
     border: 3px solid var(--line);
     background: var(--paper-2);
