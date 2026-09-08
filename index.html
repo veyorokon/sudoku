@@ -166,7 +166,8 @@
   .stat b { font-size: 22px; font-weight: 700; }
   .stat.mistakes.has b { color: var(--wrong); }
 
-  .tools { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+  .tools { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; }
+  .record { margin: 0; font-size: 14px; color: var(--ink-soft); }
   button.tool {
     font: inherit; font-size: 17px; font-weight: 700;
     min-height: 58px;
@@ -183,13 +184,13 @@
   button.tool:disabled { opacity: .4; cursor: default; }
   button.tool:focus-visible, button.key:focus-visible, .btn:focus-visible { outline: 3px solid var(--pen); outline-offset: 2px; }
 
-  .keys { display: grid; grid-template-columns: repeat(9, 1fr); gap: 8px; }
+  .keys { display: grid; grid-template-columns: repeat(9, 1fr); gap: 12px; }
   /* show strip: tap a number to ring every copy of it on the board, tap again to clear. no mode, entry keeps working */
   .show { display: grid; grid-template-columns: auto 1fr; align-items: center; gap: 12px; }
   .show > small { font-size: 13px; letter-spacing: .04em; text-transform: uppercase; color: var(--ink-soft); }
-  .chips { display: grid; grid-template-columns: repeat(9, 1fr); gap: 6px; }
+  .chips { display: grid; grid-template-columns: repeat(9, 1fr); gap: 9px; }
   button.chip {
-    font: inherit; font-size: 18px; font-weight: 700; min-height: 42px;
+    font: inherit; font-size: 18px; font-weight: 700; min-height: 48px;
     border-radius: 10px; border: 1.5px solid var(--btn-border); background: var(--btn); color: var(--ink); cursor: pointer;
   }
   button.chip.on { background: var(--pen); color: #fff; border-color: var(--pen); }
@@ -197,7 +198,7 @@
   button.chip:focus-visible { outline: 3px solid var(--pen); outline-offset: 2px; }
   .cell.view { box-shadow: inset 0 0 0 3px var(--pen); }
   @media (orientation: landscape) and (min-width: 700px) {
-    .keys { grid-template-columns: repeat(3, 1fr); gap: 14px; }
+    .keys { grid-template-columns: repeat(3, 1fr); gap: 18px; }
   }
   button.key {
     font: inherit; font-size: 32px; font-weight: 700;
@@ -212,6 +213,8 @@
     .stat b { font-size: 26px; } }
   button.key:active { transform: translateY(1px); }
   button.key.done { opacity: .22; }
+  /* number-first: the locked digit's key wears a ring until it is tapped again */
+  button.key.locked { box-shadow: 0 0 0 3px var(--pen), var(--shadow); }
 
   /* ---------- difficulty bar ---------- */
   footer.level {
@@ -316,7 +319,9 @@
         <button class="tool" id="undoBtn"><span>Undo</span><small>last move</small></button>
         <button class="tool" id="eraseBtn"><span>Erase</span><small>clear cell</small></button>
         <button class="tool" id="notesBtn"><span>Notes</span><small>off</small></button>
+        <button class="tool" id="lockBtn"><span>Lock</span><small>number first</small></button>
       </div>
+      <p class="record" id="record"></p>
       <div class="keys" id="keys"></div>
       <div class="show"><small>Show</small><div class="chips" id="chips" aria-label="Show every copy of a number"></div></div>
     </aside>
@@ -542,7 +547,9 @@
     document.getElementById('themeBtn').textContent = isDark() ? 'Light' : 'Dark';
     document.querySelector('meta[name="theme-color"]')?.setAttribute('content', isDark() ? '#15181e' : '#f5f4ef');
   }
-  let S = null, selected = -1, notesMode = false, viewDigit = 0, undo = [], tick = null, lastTick = 0;
+  let S = null, selected = -1, notesMode = false, viewDigit = 0, lockMode = false, lockDigit = 0, undo = [], tick = null, lastTick = 0;
+  const LOCK_KEY = 'kitchen-table-sudoku-lock', STATS_KEY = 'kitchen-table-sudoku-stats';
+  try { lockMode = localStorage.getItem(LOCK_KEY) === '1'; } catch {}
   const load = k => { try { const j = localStorage.getItem(k); return j ? JSON.parse(j) : null; } catch { return null; } };
   const save = () => { try { localStorage.setItem(KEY, JSON.stringify(S)); } catch {} };
   const saveLevel = v => { try { localStorage.setItem(LEVEL_KEY, String(v)); } catch {} };
@@ -582,7 +589,7 @@
   for (let i = 0; i < N; i++) {
     const b = document.createElement('button');
     b.className = 'cell'; b.dataset.r = rowOf(i); b.dataset.c = colOf(i); b.setAttribute('role', 'gridcell');
-    b.addEventListener('pointerdown', e => { e.preventDefault(); selected = i; renderAll(); });
+    b.addEventListener('pointerdown', e => { e.preventDefault(); selected = i; if (lockMode && lockDigit && S && S.puzzle[i] === 0 && !S.solved) enter(lockDigit, true); else renderAll(); });
     boardEl.appendChild(b); cells.push(b);
   }
   const keysEl = $('keys'), keys = [];
@@ -645,14 +652,21 @@
     chips.forEach((c, idx) => { c.classList.toggle('on', viewDigit === idx + 1); c.classList.toggle('done', counts[idx + 1] >= 9); c.setAttribute('aria-pressed', String(viewDigit === idx + 1)); });
     $('notesBtn').classList.toggle('on', notesMode);
     $('notesBtn').querySelector('small').textContent = notesMode ? 'on' : 'off';
+    $('lockBtn').classList.toggle('on', lockMode);
+    $('lockBtn').querySelector('small').textContent = lockMode ? (lockDigit ? `tap cells for ${lockDigit}` : 'pick a number') : 'number first';
+    keys.forEach((k, idx) => k.classList.toggle('locked', lockMode && lockDigit === idx + 1));
+    renderRecord();
     renderLevelBar();
   }
 
   // ----- moves -----
   // a mistake is a record of what happened, not part of the board, so undo never takes one back
   function snapshot() { undo.push({ values: S.values.slice(), notes: S.notes.map(n => n.slice()) }); if (undo.length > 200) undo.shift(); }
-  function enter(d) {
+  function enter(d, viaCell = false) {
+    if (lockMode && !viaCell) { lockDigit = lockDigit === d ? 0 : d; renderAll(); return; }   // number first: the key picks the digit, cells receive it
     if (S.solved || selected < 0 || S.puzzle[selected] !== 0) return;
+    // a note where that digit already sits in the row, column or box is never right: shake instead of writing it (item 5)
+    if (notesMode && !S.notes[selected].includes(d) && PEERS[selected].some(p => S.values[p] === d && S.values[p] === S.solution[p])) { fx(selected, 'shake'); return; }
     snapshot();
     if (notesMode) {
       if (S.values[selected]) S.values[selected] = 0;
@@ -690,11 +704,22 @@
     for (let i = 0; i < N; i++) if (S.puzzle[i]) { S.values[i] = S.puzzle[i]; S.notes[i] = []; }   // starting numbers may have changed since that move
     save(); renderAll(); changed.forEach(i => fx(i, 'settle'));
   }
+  // wins and best time, kept per difficulty band
+  const stats = load(STATS_KEY) || {};
+  function renderRecord() {
+    if (!S) return;
+    const band = levelName(S.level), st = stats[band];
+    $('record').textContent = st && st.won ? `${band}: ${st.won} won, best ${fmt(st.best)}` : `${band}: none finished yet`;
+  }
   function checkSolved() {
     for (let i = 0; i < N; i++) if (S.values[i] !== S.solution[i]) return;
-    S.solved = true; stopTimer(); save(); renderAll();
+    S.solved = true; stopTimer(); save();
+    const band = levelName(S.level), st = stats[band] ||= { won: 0, best: null };
+    st.won++; const newBest = st.best === null || S.elapsed < st.best; if (newBest) st.best = S.elapsed;
+    try { localStorage.setItem(STATS_KEY, JSON.stringify(stats)); } catch {}
+    renderAll();
     $('solvedTime').textContent = fmt(S.elapsed);
-    $('solvedNote').textContent = S.mistakes === 0 ? 'No mistakes. Perfect.' : `${S.mistakes} mistake${S.mistakes === 1 ? '' : 's'} along the way.`;
+    $('solvedNote').textContent = (S.mistakes === 0 ? 'No mistakes. Perfect.' : `${S.mistakes} mistake${S.mistakes === 1 ? '' : 's'} along the way.`) + (newBest && st.won > 1 ? ` New best time for ${band}.` : '');
     const motion = matchMedia('(prefers-reduced-motion: no-preference)').matches;
     if (motion) for (let i = 0; i < N; i++) fx(i, 'win', (rowOf(i) + colOf(i)) * 40);
     setTimeout(() => { $('solvedDialog').hidden = false; }, motion ? 900 : 0);
@@ -718,6 +743,8 @@
   $('eraseBtn').addEventListener('pointerdown', e => { e.preventDefault(); erase(); });
   $('undoBtn').addEventListener('pointerdown', e => { e.preventDefault(); doUndo(); });
   $('notesBtn').addEventListener('pointerdown', e => { e.preventDefault(); notesMode = !notesMode; renderAll(); });
+  const toggleLock = () => { lockMode = !lockMode; lockDigit = 0; try { localStorage.setItem(LOCK_KEY, lockMode ? '1' : '0'); } catch {} renderAll(); };
+  $('lockBtn').addEventListener('pointerdown', e => { e.preventDefault(); toggleLock(); });
 
   let levelTimer = null;
   levelInput.addEventListener('input', () => {
@@ -740,9 +767,10 @@
 
   document.addEventListener('keydown', e => {
     if (!S || !$('confirmDialog').hidden || e.target === levelInput) return;
-    if (e.key >= '1' && e.key <= '9') enter(+e.key);
+    if (e.key >= '1' && e.key <= '9') enter(+e.key, true);
     else if (e.key === 'Backspace' || e.key === 'Delete' || e.key === '0') erase();
     else if (e.key === 'n' || e.key === 'N') { notesMode = !notesMode; renderAll(); }
+    else if (e.key === 'l' || e.key === 'L') toggleLock();
     else if ((e.key === 'z' || e.key === 'Z') && (e.metaKey || e.ctrlKey)) doUndo();
     else if (e.key.startsWith('Arrow') && selected >= 0) {
       const r = rowOf(selected), c = colOf(selected);
