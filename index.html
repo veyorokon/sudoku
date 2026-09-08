@@ -410,18 +410,25 @@
     g[best] = 0;
     return n;
   }
-  function makePuzzle(targetGivens) {
+  // a deal is one solution plus the order its cells can be blanked while the puzzle stays unique.
+  // any prefix of that order is a valid puzzle, so the slider can add or remove starting numbers without a new deal
+  function makeDeal(minGivens = 22) {
     const sol = new Array(N).fill(0);
     fillGrid(sol);
-    const puz = sol.slice();
+    const puz = sol.slice(), order = [];
     let givens = N;
     for (const i of shuffle([...Array(N).keys()])) {
-      if (givens <= targetGivens) break;
-      const keep = puz[i];
+      if (givens <= minGivens) break;
       puz[i] = 0;
-      if (countSolutions(puz.slice(), 2) !== 1) puz[i] = keep; else givens--;
+      if (countSolutions(puz.slice(), 2) !== 1) puz[i] = sol[i]; else { order.push(i); givens--; }
     }
-    return { puzzle: puz, solution: sol };
+    return { solution: sol, order };
+  }
+  const givensFor = level => Math.round(48 - (level / 100) * 26);   // slider left: 48 starting numbers (easy), right: 22 (expert)
+  function puzzleAt(deal, level) {
+    const puz = deal.solution.slice(), k = Math.min(deal.order.length, N - givensFor(level));
+    for (let j = 0; j < k; j++) puz[deal.order[j]] = 0;
+    return puz;
   }
 
   // rater: solves with human techniques only, cheapest first. cost is effort beyond trivial placements.
@@ -510,21 +517,18 @@
     }
   }
 
-  // level 0..100 -> puzzle whose logical effort is closest to target. rejects anything needing guesswork.
-  function generateAt(level, budgetMs = 500) {
-    const t = level / 100;
-    const score = Math.round(t * 26), givens = Math.round(46 - t * 18);
+  // pick a deal that blanks down to at least 26 numbers and whose hard setting still yields to the human techniques.
+  // expert, further right, is allowed to need deeper reasoning: that is what expert means
+  function generateDeal(budgetMs = 500) {
     const t0 = Date.now();
-    let best = null;
-    for (let k = 0; k < 60 && Date.now() - t0 < budgetMs; k++) {
-      const p = makePuzzle(givens + ((Math.random() * 5) | 0) - 2);
-      const r = rate(p.puzzle);
-      if (!r.solvable) continue;
-      const err = Math.abs(r.cost - score);
-      if (!best || err < best.err) best = { ...p, err };
-      if (err <= 1) break;
+    let fallback = null;
+    for (let k = 0; k < 40 && Date.now() - t0 < budgetMs; k++) {
+      const d = makeDeal();
+      if (!fallback || d.order.length > fallback.order.length) fallback = d;
+      if (d.order.length < N - 26) continue;
+      if (rate(puzzleAt(d, 75)).solvable) return d;
     }
-    return best || makePuzzle(givens);
+    return fallback || makeDeal();
   }
 
   // =====================================================================
@@ -542,18 +546,31 @@
   const load = k => { try { const j = localStorage.getItem(k); return j ? JSON.parse(j) : null; } catch { return null; } };
   const save = () => { try { localStorage.setItem(KEY, JSON.stringify(S)); } catch {} };
   const saveLevel = v => { try { localStorage.setItem(LEVEL_KEY, String(v)); } catch {} };
-  const levelName = l => l < 25 ? 'Gentle' : l < 50 ? 'Easy' : l < 75 ? 'Moderate' : 'Medium';
-  const levelNum = l => Math.min(10, Math.floor(l / 10) + 1);
-  const levelLabel = l => `${levelName(l)} ${levelNum(l)}`;
+  const levelName = l => l < 25 ? 'Easy' : l < 50 ? 'Medium' : l < 75 ? 'Hard' : 'Expert';
+  const levelLabel = l => levelName(l);
   const untouched = () => S && !S.solved && S.values.every((v, i) => v === S.puzzle[i]) && S.notes.every(n => n.length === 0);
 
   function newGame(level) {
-    const { puzzle, solution } = generateAt(level);
-    S = { level, puzzle, solution, values: puzzle.slice(), notes: Array.from({ length: N }, () => []), mistakes: 0, elapsed: 0, solved: false };
-    undo = [];
+    const deal = generateDeal(), puzzle = puzzleAt(deal, level);
+    S = { level, puzzle, solution: deal.solution, order: deal.order, values: puzzle.slice(), notes: Array.from({ length: N }, () => []), mistakes: 0, elapsed: 0, solved: false };
+    undo = []; viewDigit = 0;
     selected = puzzle.findIndex(v => v === 0);
     save(); renderAll(); startTimer();
     for (let i = 0; i < N; i++) if (puzzle[i]) fx(i, 'deal', (rowOf(i) + colOf(i)) * 22);
+  }
+  // the slider on a live board: reveal or blank starting numbers on the same solution. her own entries and notes stay put
+  function applyLevel(level) {
+    if (!S || S.solved) return;
+    if (!S.order) { S.level = level; save(); renderAll(); return; }   // a game saved before deals had an order: applies next game
+    const next = puzzleAt(S, level), changed = [];
+    for (let i = 0; i < N; i++) {
+      if (S.puzzle[i] === next[i]) continue;
+      changed.push(i);
+      S.values[i] = next[i]; S.notes[i] = [];
+    }
+    S.puzzle = next; S.level = level;
+    if (selected >= 0 && S.puzzle[selected]) selected = S.values.findIndex((v, i) => S.puzzle[i] === 0 && v === 0);
+    save(); renderAll(); changed.forEach(i => fx(i, 'settle')); checkSolved();
   }
 
   // ----- dom -----
@@ -589,7 +606,7 @@
     const l = +levelInput.value;
     levelInput.style.setProperty('--fill', l + '%');
     levelNameEl.textContent = levelLabel(l);
-    levelNote.textContent = untouched() ? 'Slide to change this puzzle' : (S && l !== S.level ? 'Applies to your next game' : '');
+    levelNote.textContent = S && S.order ? `${S.puzzle.filter(v => v).length} starting numbers` : (S && l !== S.level ? 'Applies to your next game' : '');
   }
   function renderAll() {
     $('diff').textContent = levelLabel(S.level);
@@ -669,6 +686,7 @@
     const u = undo.pop(); if (!u) return;
     const changed = []; for (let i = 0; i < N; i++) if (S.values[i] !== u.values[i] || S.notes[i].join() !== u.notes[i].join()) changed.push(i);
     S.values = u.values; S.notes = u.notes; S.mistakes = u.mistakes;
+    for (let i = 0; i < N; i++) if (S.puzzle[i]) { S.values[i] = S.puzzle[i]; S.notes[i] = []; }   // starting numbers may have changed since that move
     save(); renderAll(); changed.forEach(i => fx(i, 'settle'));
   }
   function checkSolved() {
@@ -700,12 +718,12 @@
   $('undoBtn').addEventListener('pointerdown', e => { e.preventDefault(); doUndo(); });
   $('notesBtn').addEventListener('pointerdown', e => { e.preventDefault(); notesMode = !notesMode; renderAll(); });
 
-  let regenTimer = null;
+  let levelTimer = null;
   levelInput.addEventListener('input', () => {
     const l = +levelInput.value;
     saveLevel(l);
     renderLevelBar();
-    if (untouched()) { clearTimeout(regenTimer); regenTimer = setTimeout(() => newGame(l), 120); }
+    clearTimeout(levelTimer); levelTimer = setTimeout(() => applyLevel(l), 40);
   });
 
   $('newBtn').addEventListener('click', () => {
@@ -739,6 +757,7 @@
   const saved = load(KEY);
   if (saved && saved.puzzle && saved.puzzle.length === N && saved.solution && saved.solution.length === N) {
     S = saved;
+    if (S.order) levelInput.value = S.level;
     selected = S.values.findIndex((v, i) => S.puzzle[i] === 0 && v === 0);
     renderAll(); startTimer();
   } else {
